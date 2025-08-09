@@ -1,0 +1,461 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pretrillions - Game</title>
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            background: linear-gradient(to bottom, #2c3e50, #34495e); /* Gradient background */
+            font-family: 'Poppins', sans-serif; /* New font */
+            color: #ecf0f1;
+        }
+        h1 {
+            color: #ecf0f1;
+            text-shadow: 2px 2px 4px #2c3e50; /* Add text shadow for depth */
+            font-size: 3em;
+            margin-bottom: 10px;
+        }
+        #gameCanvas {
+            border: 2px solid #2c3e50;
+            background-color: #82a0c2; /* Lighter gloomy blue for canvas */
+            border-radius: 8px;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+        }
+        #infoPanel {
+            margin-top: 20px;
+            font-size: 1.5em; /* Larger font */
+            text-align: center;
+            background-color: #2c3e50;
+            padding: 10px 20px;
+            border-radius: 8px;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+        }
+        #score {
+            font-weight: bold;
+            color: #f1c40f; /* Gold color for score */
+        }
+        #controlsInfo {
+            font-size: 0.9em;
+            color: #bdc3c7; /* Lighter grey for info */
+        }
+        #highScore {
+            font-size: 0.8em;
+            color: #bdc3c7;
+            margin-top: 5px;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>Pretrillions</h1>
+    <canvas id="gameCanvas" width="800" height="400"></canvas>
+    <div id="infoPanel">
+        Score: <span id="score">0</span>
+        <div id="highScore">High Score: 0</div>
+        <div id="controlsInfo">Use 'W' or 'Arrow Up' to jump.</div>
+    </div>
+
+    <script>
+        // --- Game Elements ---
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const scoreElement = document.getElementById('score');
+        const highScoreElement = document.getElementById('highScore');
+
+        // --- Game Settings and Variables ---
+        let score = 0;
+        let highScore = localStorage.getItem('pretrillionsHighScore') || 0;
+        let gameSpeed = 3;
+        let isGameOver = false;
+        let frameCount = 0; // Frame counter for spawning objects
+
+        // --- Player Settings ---
+        const playerImage = new Image();
+        playerImage.src = 'player.png'; // IMPORTANT: Make sure you have a 'player.png' file in the same directory
+
+        const player = {
+            x: 50,
+            y: canvas.height - 50,
+            width: 50,
+            height: 50,
+            velocityY: 0,
+            gravity: 0.6,
+            jumpStrength: -12,
+            jumps: 0,
+            maxJumps: 2 // Allowed jumps (1 for initial, 1 for double jump)
+        };
+
+        // --- Obstacles, Dollars, and Particles Arrays ---
+        let obstacles = [];
+        let dollars = [];
+        let particles = [];
+        let stars = [];
+
+        // --- Static Background ---
+        function createBackground() {
+            // Create stars
+            for (let i = 0; i < 100; i++) {
+                stars.push({
+                    x: Math.random() * canvas.width,
+                    y: Math.random() * canvas.height, // Stars across the whole canvas
+                    size: Math.random() * 1.5,
+                    opacity: Math.random() * 0.5 + 0.2
+                });
+            }
+        }
+
+        function drawBackground() {
+            // Create a gradient for the sky
+            const skyGradient = ctx.createLinearGradient(0, 0, 0, canvas.height);
+            skyGradient.addColorStop(0, '#2c3e50'); // Darker blue at the top
+            skyGradient.addColorStop(1, '#82a0c2'); // Fades to canvas background color
+            
+            ctx.fillStyle = skyGradient;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Draw stars
+            stars.forEach(star => {
+                ctx.fillStyle = `rgba(236, 240, 241, ${star.opacity})`;
+                ctx.fillRect(star.x, star.y, star.size, star.size);
+            });
+        }
+
+
+        // --- Drawing Functions ---
+        function drawPlayer() {
+            ctx.save();
+            let scaleX = 1;
+            let scaleY = 1;
+            // Apply a 'squash' effect when landing
+            if (player.velocityY > 1 && player.y + player.height >= canvas.height - 1) {
+                scaleX = 1.1;
+                scaleY = 0.9;
+            }
+            // Apply a 'stretch' effect when jumping
+            else if (player.velocityY < -1) {
+                scaleX = 0.9;
+                scaleY = 1.1;
+            }
+            
+            // Translate to the center of the player for scaling
+            ctx.translate(player.x + player.width / 2, player.y + player.height / 2);
+            ctx.scale(scaleX, scaleY);
+
+            // Check if the image is loaded, otherwise draw a fallback rectangle
+            if (playerImage.complete && playerImage.naturalHeight !== 0) {
+                ctx.drawImage(playerImage, -player.width / 2, -player.height / 2, player.width, player.height);
+            } else {
+                ctx.fillStyle = '#3498db'; // Blue fallback player
+                ctx.fillRect(-player.width / 2, -player.height / 2, player.width, player.height);
+            }
+            ctx.restore();
+        }
+
+        function drawObstacles() {
+            const windowColor = '#F1C40F'; // Yellow for lit windows
+            obstacles.forEach(obstacle => {
+                // Draw building body
+                ctx.fillStyle = obstacle.color;
+                ctx.fillRect(obstacle.x, obstacle.y, obstacle.width, obstacle.height);
+
+                // Draw windows
+                const windowSize = 4;
+                const windowSpacingX = 8;
+                const windowSpacingY = 10;
+                const numRows = Math.floor((obstacle.height - 5) / windowSpacingY);
+                const numCols = Math.floor((obstacle.width - 4) / windowSpacingX);
+                
+                ctx.fillStyle = windowColor;
+                for (let i = 0; i < numRows; i++) {
+                    for (let j = 0; j < numCols; j++) {
+                        // Randomly decide if a window is lit
+                        if (Math.random() > 0.4) {
+                            ctx.fillRect(
+                                obstacle.x + (j * windowSpacingX) + 3,
+                                obstacle.y + (i * windowSpacingY) + 5,
+                                windowSize,
+                                windowSize
+                            );
+                        }
+                    }
+                }
+            });
+        }
+
+        function drawDollars() {
+            ctx.fillStyle = '#f1c40f'; // Gold color for the dollar sign
+            ctx.font = '24px Arial';
+            ctx.textAlign = 'center';
+            dollars.forEach(dollar => {
+                ctx.fillText('$', dollar.x + dollar.width / 2, dollar.y + dollar.height - 5);
+            });
+        }
+
+        function drawParticles() {
+            particles.forEach((p, index) => {
+                ctx.fillStyle = `rgba(241, 196, 15, ${p.opacity})`;
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+                ctx.fill();
+            });
+        }
+        
+        function drawScore() {
+            scoreElement.textContent = score;
+            highScoreElement.textContent = `High Score: ${highScore}`;
+        }
+
+        // --- Update and Logic Functions ---
+        function updatePlayer() {
+            // Apply gravity
+            player.velocityY += player.gravity;
+            player.y += player.velocityY;
+
+            // Ground check
+            if (player.y + player.height > canvas.height) {
+                player.y = canvas.height - player.height;
+                player.velocityY = 0;
+                player.jumps = 0; // Reset jumps when on the ground
+            }
+        }
+
+        function spawnObjects() {
+            frameCount++;
+            // Spawn new obstacle periodically
+            if (frameCount % 150 === 0) {
+                const height = Math.random() * 100 + 50; // Balanced building height
+                const width = Math.random() * 20 + 30; // Varied width
+                const shades = ['#5D6D7E', '#808B96', '#707B7C'];
+                
+                obstacles.push({
+                    x: canvas.width,
+                    y: canvas.height - height,
+                    width: width,
+                    height: height,
+                    color: shades[Math.floor(Math.random() * shades.length)]
+                });
+            }
+            // Spawn new dollar periodically
+            if (frameCount % 110 === 0) {
+                 dollars.push({
+                    x: canvas.width,
+                    // Spawn dollars in a reachable area
+                    y: Math.random() * 150 + 120, // Adjusted for jump height 
+                    width: 20,
+                    height: 20
+                });
+            }
+        }
+
+        function updateObstacles() {
+            obstacles.forEach(obstacle => {
+                obstacle.x -= gameSpeed;
+            });
+            // Remove obstacles that are off-screen
+            obstacles = obstacles.filter(obstacle => obstacle.x + obstacle.width > 0);
+        }
+
+        function updateDollars() {
+            dollars.forEach(dollar => {
+                dollar.x -= gameSpeed;
+            });
+             // Remove dollars that are off-screen
+            dollars = dollars.filter(dollar => dollar.x + dollar.width > 0);
+        }
+
+        function updateParticles() {
+            for (let i = particles.length - 1; i >= 0; i--) {
+                let p = particles[i];
+                p.x += p.vx;
+                p.y += p.vy;
+                p.opacity -= 0.02;
+                if (p.opacity <= 0) {
+                    particles.splice(i, 1);
+                }
+            }
+        }
+
+        function createParticles(x, y) {
+            for (let i = 0; i < 15; i++) {
+                particles.push({
+                    x: x,
+                    y: y,
+                    vx: (Math.random() - 0.5) * 4,
+                    vy: (Math.random() - 0.5) * 4,
+                    size: Math.random() * 3 + 1,
+                    opacity: 1
+                });
+            }
+        }
+
+        function checkCollisions() {
+            // Obstacle collision
+            obstacles.forEach(obstacle => {
+                if (
+                    player.x < obstacle.x + obstacle.width &&
+                    player.x + player.width > obstacle.x &&
+                    player.y < obstacle.y + obstacle.height &&
+                    player.y + player.height > obstacle.y
+                ) {
+                    gameOver();
+                }
+            });
+
+            // Dollar collection
+            dollars.forEach((dollar, index) => {
+                 if (
+                    player.x < dollar.x + dollar.width &&
+                    player.x + player.width > dollar.x &&
+                    player.y < dollar.y + dollar.height &&
+                    player.y + player.height > dollar.y
+                ) {
+                    score += 100; // Increase score for collecting a dollar
+                    createParticles(dollar.x + dollar.width / 2, dollar.y + dollar.height / 2); // Create particles on collection
+                    dollars.splice(index, 1); // Remove dollar
+                }
+            });
+        }
+        
+        function increaseDifficulty() {
+            // Slowly increase game speed over time
+            gameSpeed += 0.002;
+            // Add score for distance traveled
+            score++;
+        }
+
+        function gameOver() {
+            isGameOver = true;
+            if (score > highScore) {
+                highScore = score;
+                localStorage.setItem('pretrillionsHighScore', highScore);
+            }
+
+            // Draw the overlay immediately, on top of the last rendered frame
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            ctx.font = '50px Arial';
+            ctx.fillStyle = 'white';
+            ctx.textAlign = 'center';
+            ctx.fillText('Game Over!', canvas.width / 2, canvas.height / 2 - 40);
+            
+            ctx.font = '20px Arial';
+            ctx.fillText(`Your Score: ${score}`, canvas.width / 2, canvas.height / 2);
+
+            // Conditional message based on score
+            let message1 = '';
+            let message2 = '';
+            ctx.font = '18px Poppins';
+
+            if (score < 500) {
+                ctx.fillStyle = '#ffdddd';
+                message1 = 'You are pre-pre-pre-pre-trillions.';
+                message2 = '- basically poor -';
+            } else if (score < 2000) {
+                ctx.fillStyle = '#d4ffdd';
+                message1 = 'Not bad, you have some pocket money.';
+                message2 = '- a few dollars -';
+            } else if (score < 5000) {
+                ctx.fillStyle = '#fffacd';
+                message1 = 'You are becoming a real pretrillionaire!';
+                message2 = '- keep going! -';
+            } else {
+                ctx.fillStyle = '#f1c40f';
+                message1 = 'YOU ARE A TRUE PRETRILLIONAIRE!';
+                message2 = '- absolute legend -';
+            }
+            
+            ctx.fillText(message1, canvas.width / 2, canvas.height / 2 + 40);
+            ctx.font = '16px Poppins';
+            ctx.fillStyle = '#bdc3c7';
+            ctx.fillText(message2, canvas.width / 2, canvas.height / 2 + 65);
+
+            ctx.font = '20px Poppins';
+            ctx.fillStyle = 'white';
+            ctx.fillText("Press any key to restart.", canvas.width / 2, canvas.height / 2 + 90);
+        }
+
+        function resetGame() {
+            score = 0;
+            gameSpeed = 3;
+            isGameOver = false;
+            player.y = canvas.height - 50;
+            player.velocityY = 0;
+            player.jumps = 0;
+            obstacles = [];
+            dollars = [];
+            particles = [];
+            frameCount = 0;
+            gameLoop(); // Restart the game
+        }
+
+        // --- Controls ---
+        document.addEventListener('keydown', (e) => {
+            if (isGameOver) {
+                resetGame();
+                return;
+            }
+            // Jump with 'w' or 'ArrowUp'
+            if ((e.key === 'w' || e.key === 'ArrowUp') && player.jumps < player.maxJumps) {
+                player.velocityY = player.jumpStrength;
+                player.jumps++;
+            }
+            // Fast fall with 's' or 'ArrowDown' (optional)
+            if (e.key === 's' || e.key === 'ArrowDown') {
+                 if (player.velocityY < 10) { // Add a cap to fast-fall speed
+                    player.velocityY += 3;
+                 }
+            }
+        });
+
+        // --- Main Game Loop ---
+        function gameLoop() {
+            // Stop the entire loop if the game has ended.
+            if (isGameOver) {
+                return;
+            }
+
+            // --- UPDATE PHASE ---
+            spawnObjects();
+            updatePlayer();
+            updateObstacles();
+            updateDollars();
+            updateParticles();
+            checkCollisions(); // This might call gameOver() and draw the final screen
+            increaseDifficulty();
+
+            // If gameOver was called during the update phase, stop immediately
+            // to prevent the canvas from being cleared and redrawn.
+            if (isGameOver) {
+                return;
+            }
+
+            // --- DRAW PHASE ---
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            drawBackground();
+            drawPlayer();
+            drawObstacles();
+            drawDollars();
+            drawParticles();
+            drawScore();
+            
+            // Request the next frame to continue the loop
+            requestAnimationFrame(gameLoop);
+        }
+
+        // Start the game
+        createBackground();
+        gameLoop();
+
+    </script>
+
+</body>
+</html>
